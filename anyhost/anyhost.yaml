@@ -1,0 +1,83 @@
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: any-host-inbound-lua
+  namespace: istio-system
+spec:
+  configPatches:
+    # The first patch adds the lua filter to the listener/http connection manager
+  - applyTo: HTTP_FILTER
+    match:
+      context: SIDECAR_INBOUND
+      listener:
+        filterChain:
+          filter:
+            name: "envoy.filters.network.http_connection_manager"
+            subFilter:
+              name: "envoy.filters.http.router"
+    patch:
+      operation: INSERT_BEFORE
+      value: # lua filter specification
+       name: envoy.lua
+       typed_config:
+          "@type": "type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua"
+          inlineCode: |
+            function envoy_on_request(handle)
+                local host = handle:headers():get("x-mesh-rewrite-host")
+                if(host == nil or host == '')
+                then
+                    return
+                end
+                handle:headers():replace(":authority",host)
+            end
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: any-host-outbound-lua
+  namespace: istio-system
+spec:
+  configPatches:
+    # The first patch adds the lua filter to the listener/http connection manager
+  - applyTo: HTTP_FILTER
+    match:
+      context: SIDECAR_OUTBOUND
+      listener:
+        filterChain:
+          filter:
+            name: "envoy.filters.network.http_connection_manager"
+            subFilter:
+              name: "envoy.filters.http.router"
+    patch:
+      operation: INSERT_BEFORE
+      value: # lua filter specification
+       name: envoy.lua
+       typed_config:
+          "@type": "type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua"
+          inlineCode: |
+            IPPrefix = "172.16." 
+            HostSuffixes = { ".cluster.local",".svc" }
+
+            function envoy_on_request(handle)
+                local addr = handle:streamInfo():downstreamLocalAddress()
+                -- not cluster ip
+                if(addr:find(IPPrefix) ~= 1)
+                then 
+                    return 
+                end
+
+                local host = handle:headers():get(":authority")
+                if (addr:find(host) == 1)
+                then
+                    return
+                end
+
+                for _,suffix in ipairs(HostSuffixes) do
+                    if(host:sub(-string.len(suffix)) == suffix)
+                    then
+                        return
+                    end
+                end
+                handle:headers():replace(":authority",addr)
+                handle:headers():add("x-mesh-rewrite-host",addr)
+            end

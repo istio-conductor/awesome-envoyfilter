@@ -1,0 +1,32 @@
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: rewrite-gateway-404-response-lua
+  namespace: istio-system
+spec:
+  configPatches:
+  - applyTo: HTTP_FILTER
+    match:
+      context: GATEWAY
+      listener:
+        filterChain:
+          filter:
+            name: envoy.filters.network.http_connection_manager
+            subFilter:
+              name: envoy.filters.http.router
+    patch:
+      operation: INSERT_BEFORE
+      value:
+        name: envoy.lua
+        typed_config:
+          '@type': type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
+          inlineCode:
+            function envoy_on_response(handle)
+              if (handle:headers():get(":status") == "404")
+              then
+               local body = handle:body(true)
+               local content_length = body:setBytes("<html><b>Not Found<b></html>")
+               handle:headers():replace("content-length", handle:body():setBytes("<html><b>Not Found<b></html>"))
+               handle:headers():replace("content-type", "text/html")
+              end
+            end
